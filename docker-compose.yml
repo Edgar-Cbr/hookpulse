@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hookpulse-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hookpulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hookpulse_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-hookpulse_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hookpulse} -d ${POSTGRES_DB:-hookpulse_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: hookpulse-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: hookpulse-backend
+    restart: always
+    environment:
+      ENVIRONMENT: development
+      DEBUG: "True"
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hookpulse}:${POSTGRES_PASSWORD:-hookpulse_secret}@postgres:5432/${POSTGRES_DB:-hookpulse_db}
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_SERVER: postgres
+      REDIS_HOST: redis
+      SECRET_KEY: ${SECRET_KEY:-supersecretkey-hookpulse-change-in-production-32bytes}
+      DEFAULT_ENDPOINT_SLUG: ${DEFAULT_ENDPOINT_SLUG:-ep_taxguard_prod}
+      DEFAULT_SIGNING_SECRET: ${DEFAULT_SIGNING_SECRET:-whsec_taxguard_secure_token_secret_123}
+      BACKEND_CORS_ORIGINS: '["http://localhost:5173","http://localhost:3000","http://127.0.0.1:5173"]'
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/code/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
