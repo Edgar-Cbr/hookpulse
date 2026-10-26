@@ -5,11 +5,14 @@ from typing import AsyncGenerator
 from fastapi import FastAPI, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.core.config import settings
 from app.core.redis import close_redis, get_redis_client
+from app.db.base import Base
 from app.db.session import AsyncSessionLocal, async_engine
+import app.models  # Register all models with Base.metadata
+from app.models.endpoint import Endpoint
 
 logging.basicConfig(
     level=logging.INFO if not settings.DEBUG else logging.DEBUG,
@@ -22,10 +25,44 @@ logger = logging.getLogger("hookpulse")
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     FastAPI Lifespan Context Manager.
-    Handles startup infrastructure checks and clean shutdown.
+    - Initializes database tables (SQLAlchemy 2.0).
+    - Seeds default TaxGuard endpoint for out-of-the-box operation.
+    - Handles graceful shutdown of DB and Redis connections.
     """
     logger.info("Initializing HookPulse backend engine...")
+
+    # Auto-initialize database tables
+    try:
+        async with async_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables verified and initialized successfully.")
+    except Exception as exc:
+        logger.warning(f"Database table auto-initialization deferred or failed: {exc}")
+
+    # Seed default endpoint (TaxGuard Fiscal Webhook)
+    try:
+        async with AsyncSessionLocal() as session:
+            stmt = select(Endpoint).where(Endpoint.slug == settings.DEFAULT_ENDPOINT_SLUG)
+            result = await session.execute(stmt)
+            endpoint = result.scalar_one_or_none()
+            if not endpoint:
+                endpoint = Endpoint(
+                    slug=settings.DEFAULT_ENDPOINT_SLUG,
+                    name=settings.DEFAULT_ENDPOINT_NAME,
+                    target_url=settings.DEFAULT_TARGET_URL,
+                    signing_secret=settings.DEFAULT_SIGNING_SECRET,
+                    is_active=True,
+                )
+                session.add(endpoint)
+                await session.commit()
+                logger.info(f"Default seed endpoint created: {settings.DEFAULT_ENDPOINT_SLUG}")
+            else:
+                logger.info(f"Default seed endpoint already present: {settings.DEFAULT_ENDPOINT_SLUG}")
+    except Exception as exc:
+        logger.warning(f"Default endpoint seeding deferred or failed: {exc}")
+
     yield
+
     logger.info("Shutting down HookPulse services...")
     await close_redis()
     await async_engine.dispose()
