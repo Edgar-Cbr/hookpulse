@@ -55,18 +55,28 @@ async def publish_event(channel: str, message: Union[dict[str, Any], str]) -> in
     """
     Publishes a message to a Redis Pub/Sub channel.
     If message is a dictionary, it is serialized to JSON string.
+    Also forwards to in-memory WebSocket manager for local resilience.
     """
-    client = await get_redis_client()
+    payload = json.dumps(message) if isinstance(message, dict) else message
+
+    # In-memory WebSocket broadcast fallback
     try:
-        payload = json.dumps(message) if isinstance(message, dict) else message
+        from app.api.ws import manager
+        if channel.startswith(EVENT_CHANNEL_PREFIX):
+            slug = channel[len(EVENT_CHANNEL_PREFIX):]
+            await manager.broadcast_to_slug(slug, payload)
+    except Exception:
+        pass
+
+    try:
+        client = await get_redis_client()
         subscribers = await client.publish(channel, payload)
+        await client.aclose()
         logger.debug(f"Published message to {channel} ({subscribers} active subscribers)")
         return subscribers
     except Exception as exc:
-        logger.warning(f"Failed to publish to channel {channel}: {exc}")
+        logger.debug(f"Redis PubSub omitted: {exc}")
         return 0
-    finally:
-        await client.aclose()
 
 
 async def publish_endpoint_event(slug: str, event_data: dict[str, Any]) -> int:
