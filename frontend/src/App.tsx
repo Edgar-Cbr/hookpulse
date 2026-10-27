@@ -1,122 +1,107 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import './App.css'
+import React, { useEffect, useState } from 'react';
+import { AttemptTimeline } from './components/AttemptTimeline';
+import { Header } from './components/Header';
+import { LiveEventFeed } from './components/LiveEventFeed';
+import { PayloadInspector } from './components/PayloadInspector';
+import { SimulatorBar } from './components/SimulatorBar';
+import { useWebhookStream } from './hooks/useWebhookStream';
+import { api } from './services/api';
+import type { Endpoint } from './types/webhook';
 
-function App() {
-  const [count, setCount] = useState(0)
+export const App: React.FC = () => {
+  const [endpoint, setEndpoint] = useState<Endpoint | null>(null);
+  const activeSlug = endpoint?.slug || 'ep_taxguard_prod';
+
+  // Load active endpoint info
+  useEffect(() => {
+    let isMounted = true;
+    api
+      .getEndpoints()
+      .then((endpoints) => {
+        if (!isMounted) return;
+        const defaultEp =
+          endpoints.find((e) => e.slug === 'ep_taxguard_prod') || endpoints[0] || null;
+        setEndpoint(defaultEp);
+      })
+      .catch(() => {
+        // Fallback to static representation if API temporarily unavailable
+        if (!isMounted) return;
+        setEndpoint({
+          id: '00000000-0000-0000-0000-000000000000',
+          slug: 'ep_taxguard_prod',
+          name: 'TaxGuard Fiscal Batch Webhook',
+          target_url: 'http://backend:8000/api/v1/simulator/mock-target?behavior=success',
+          signing_secret: 'whsec_taxguard_secure_token_secret_123',
+          is_active: true,
+          created_at: new Date().toISOString(),
+        });
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const {
+    events,
+    selectedEvent,
+    setSelectedEvent,
+    isConnected,
+    isReconnecting,
+    isLoading,
+    replayEvent,
+  } = useWebhookStream({ slug: activeSlug });
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+      {/* 1. Header with Live Status & Counters */}
+      <Header
+        endpoint={endpoint}
+        events={events}
+        isConnected={isConnected}
+        isReconnecting={isReconnecting}
+      />
 
-      <div className="ticks"></div>
+      {/* 2. Simulator Controls Bar */}
+      <SimulatorBar
+        endpointSlug={activeSlug}
+        onTriggered={() => {
+          // New event will arrive automatically through WebSocket
+        }}
+      />
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+      {/* 3. Main Dashboard Workspace */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full min-h-[calc(100vh-210px)]">
+          {/* Left Column: Live Event Ingestion Feed (5 cols) */}
+          <div className="lg:col-span-5 h-[650px] lg:h-[calc(100vh-240px)] sticky top-28">
+            <LiveEventFeed
+              events={events}
+              selectedEvent={selectedEvent}
+              onSelectEvent={setSelectedEvent}
+              isLoading={isLoading}
+            />
+          </div>
+
+          {/* Right Column: Timeline & Payload Inspector (7 cols) */}
+          <div className="lg:col-span-7 flex flex-col gap-6">
+            {/* Upper: Attempt Timeline & Replay Controls */}
+            <div className="min-h-[300px] flex-1">
+              <AttemptTimeline
+                event={selectedEvent}
+                onReplay={replayEvent}
+              />
+            </div>
+
+            {/* Lower: Payload & Headers Inspector */}
+            <div className="min-h-[340px] flex-1">
+              <PayloadInspector event={selectedEvent} />
+            </div>
+          </div>
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+      </main>
+    </div>
+  );
+};
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
-}
-
-export default App
+export default App;
