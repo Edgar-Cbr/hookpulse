@@ -11,6 +11,7 @@ from app.api.deps import get_db_session
 from app.models.endpoint import Endpoint
 from app.models.webhook_event import WebhookEvent
 from app.schemas.event import WebhookEventDetail
+from app.services.delivery_engine import dispatch_webhook_event
 
 logger = logging.getLogger("hookpulse.events")
 
@@ -73,3 +74,46 @@ async def get_event_detail(
         )
 
     return WebhookEventDetail.model_validate(event)
+
+
+@router.post("/events/{event_id}/replay", response_model=WebhookEventDetail, status_code=status.HTTP_200_OK)
+async def replay_webhook_event(
+    event_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+) -> WebhookEventDetail:
+    """
+    Manual Webhook Replay Endpoint.
+    Forces an immediate delivery attempt for an event in DLQ or DELIVERED state.
+    Updates the event state, logs a new DeliveryAttempt, notifies WebSocket subscribers,
+    and returns the updated event with its refreshed timeline.
+    """
+    stmt = (
+        select(WebhookEvent)
+        .where(WebhookEvent.id == event_id)
+        .options(selectinload(WebhookEvent.attempts))
+    )
+    result = await session.execute(stmt)
+    event = result.scalar_one_or_none()
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Event '{event_id}' not found.",
+        )
+
+    logger.info(f"Manual replay triggered for event {event_id} (current status: {event.status})")
+
+    # Dispatch the delivery attempt immediately
+    attempt = await dispatch_webhook_event(event_id=event.id)
+    if not attempt:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to execute replay dispatch for this event.",
+        )
+
+    # Reload fresh state with attempts
+    session.expire_all()
+    reloaded_res = await session.execute(stmt)
+    updated_event = reloaded_res.scalar_one()
+
+    return WebhookEventDetail.model_validate(updated_event)
+

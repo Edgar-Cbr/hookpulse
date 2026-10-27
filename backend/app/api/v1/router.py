@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints.endpoints import router as endpoints_router
 from app.api.v1.endpoints.events import router as events_router
 from app.api.v1.endpoints.ingest import router as ingest_router
+from app.api.v1.endpoints.simulator import router as simulator_router
 
 api_v1_router = APIRouter()
 
@@ -11,6 +12,9 @@ api_v1_router.include_router(endpoints_router, prefix="/endpoints", tags=["Endpo
 
 # Mount event history & inspect
 api_v1_router.include_router(events_router, tags=["Events"])
+
+# Mount traffic simulator & mock receiver
+api_v1_router.include_router(simulator_router, prefix="/simulator", tags=["Simulator"])
 
 # Also mount ingest under v1 for convenience (/api/v1/ingest/{slug})
 api_v1_router.include_router(ingest_router, tags=["Ingestion"])
