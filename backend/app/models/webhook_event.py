@@ -82,7 +82,7 @@ class WebhookEvent(Base):
     attempts: Mapped[List["DeliveryAttempt"]] = relationship(
         "DeliveryAttempt",
         back_populates="event",
-        cascade="all, delete-cascade",
+        cascade="all, delete-orphan",
         order_by="DeliveryAttempt.attempt_number",
     )
 

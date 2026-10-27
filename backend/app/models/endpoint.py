@@ -56,7 +56,7 @@ class Endpoint(Base):
     events: Mapped[List["WebhookEvent"]] = relationship(
         "WebhookEvent",
         back_populates="endpoint",
-        cascade="all, delete-cascade",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:
