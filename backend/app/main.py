@@ -7,6 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, text
 
+from app.api.v1.endpoints.ingest import router as ingest_router
+from app.api.v1.router import api_v1_router
+from app.api.ws import websocket_router
 from app.core.config import settings
 from app.core.redis import close_redis, get_redis_client
 from app.db.base import Base
@@ -87,6 +90,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Public high-speed ingest route: POST /ingest/{slug}
+app.include_router(ingest_router)
+
+# Versioned API: /api/v1/...
+app.include_router(api_v1_router, prefix=settings.API_V1_STR)
+
+# Real-time WebSocket route: WS /ws/endpoints/{slug}
+app.include_router(websocket_router)
+
 
 @app.get("/", tags=["Root"])
 async def root():
@@ -96,6 +108,8 @@ async def root():
         "version": "1.0.0",
         "status": "online",
         "docs": "/docs",
+        "ingest_sample": "/ingest/{slug}",
+        "ws_sample": "/ws/endpoints/{slug}",
     }
 
 

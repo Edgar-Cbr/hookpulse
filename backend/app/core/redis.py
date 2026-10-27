@@ -1,10 +1,20 @@
 import json
+import logging
 from typing import Any, AsyncGenerator, Union
 import redis.asyncio as redis
 from app.core.config import settings
 
+logger = logging.getLogger("hookpulse.redis")
+
 # Global redis connection pool
 redis_pool: redis.ConnectionPool | None = None
+
+EVENT_CHANNEL_PREFIX = "hookpulse:events:"
+
+
+def get_endpoint_channel(slug: str) -> str:
+    """Returns the Redis Pub/Sub channel name for a specific endpoint slug."""
+    return f"{EVENT_CHANNEL_PREFIX}{slug}"
 
 
 def get_redis_pool() -> redis.ConnectionPool:
@@ -13,7 +23,7 @@ def get_redis_pool() -> redis.ConnectionPool:
         redis_pool = redis.ConnectionPool.from_url(
             settings.REDIS_URL,
             decode_responses=True,
-            max_connections=20,
+            max_connections=50,
         )
     return redis_pool
 
@@ -49,6 +59,17 @@ async def publish_event(channel: str, message: Union[dict[str, Any], str]) -> in
     client = await get_redis_client()
     try:
         payload = json.dumps(message) if isinstance(message, dict) else message
-        return await client.publish(channel, payload)
+        subscribers = await client.publish(channel, payload)
+        logger.debug(f"Published message to {channel} ({subscribers} active subscribers)")
+        return subscribers
+    except Exception as exc:
+        logger.warning(f"Failed to publish to channel {channel}: {exc}")
+        return 0
     finally:
         await client.aclose()
+
+
+async def publish_endpoint_event(slug: str, event_data: dict[str, Any]) -> int:
+    """Publishes a structured event message to an endpoint's specific channel."""
+    channel = get_endpoint_channel(slug)
+    return await publish_event(channel, event_data)
