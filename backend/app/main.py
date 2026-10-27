@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 import logging
 from typing import AsyncGenerator
@@ -16,6 +17,7 @@ from app.db.base import Base
 from app.db.session import AsyncSessionLocal, async_engine
 import app.models  # Register all models with Base.metadata
 from app.models.endpoint import Endpoint
+from app.services.delivery_engine import retry_worker_loop
 
 logging.basicConfig(
     level=logging.INFO if not settings.DEBUG else logging.DEBUG,
@@ -64,9 +66,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning(f"Default endpoint seeding deferred or failed: {exc}")
 
+    # Start background retry worker loop
+    worker_task = asyncio.create_task(retry_worker_loop(poll_interval=2.0))
+    logger.info("Background retry worker loop registered in lifespan.")
+
     yield
 
     logger.info("Shutting down HookPulse services...")
+    worker_task.cancel()
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
     await close_redis()
     await async_engine.dispose()
     logger.info("HookPulse shutdown complete.")

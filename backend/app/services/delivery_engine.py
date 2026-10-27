@@ -4,6 +4,7 @@ Handles asynchronous HTTP dispatch via httpx, latency measurement,
 DeliveryAttempt persistence, exponential backoff evaluation, and real-time Redis Pub/Sub broadcasts.
 """
 
+import asyncio
 from datetime import datetime, timezone
 import json
 import logging
@@ -225,3 +226,53 @@ async def _execute_dispatch(
     await publish_endpoint_event(endpoint.slug, ws_update)
 
     return attempt
+
+
+async def _poll_and_dispatch_retries() -> None:
+    """
+    Finds pending WebhookEvents scheduled for retry where next_retry_at <= now()
+    and triggers an asynchronous delivery dispatch for each.
+    """
+    now = datetime.now(timezone.utc)
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(WebhookEvent.id)
+            .where(
+                WebhookEvent.status == "RETRYING",
+                WebhookEvent.next_retry_at.is_not(None),
+                WebhookEvent.next_retry_at <= now,
+            )
+            .order_by(WebhookEvent.next_retry_at.asc())
+            .limit(20)
+        )
+        result = await session.execute(stmt)
+        event_ids = result.scalars().all()
+
+    if event_ids:
+        logger.info(f"Retry worker detected {len(event_ids)} event(s) due for re-dispatch.")
+        for eid in event_ids:
+            try:
+                await dispatch_webhook_event(eid)
+            except Exception as exc:
+                logger.error(f"Error re-dispatching event {eid} in retry loop: {exc}", exc_info=True)
+
+
+async def retry_worker_loop(poll_interval: float = 2.0) -> None:
+    """
+    Continuous background loop that polls for retriable webhook events.
+    Runs during the FastAPI application lifespan until shutdown.
+    """
+    logger.info(f"Background retry worker started (interval: {poll_interval}s).")
+    try:
+        while True:
+            try:
+                await _poll_and_dispatch_retries()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(f"Unexpected error in retry polling loop: {exc}", exc_info=True)
+
+            await asyncio.sleep(poll_interval)
+    except asyncio.CancelledError:
+        logger.info("Background retry worker received cancellation. Shutting down gracefully.")
+

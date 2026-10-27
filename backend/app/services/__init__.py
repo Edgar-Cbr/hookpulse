@@ -6,7 +6,7 @@ from app.services.backoff import (
     calculate_backoff_delay,
     compute_retry_state,
 )
-from app.services.delivery_engine import dispatch_webhook_event
+from app.services.delivery_engine import dispatch_webhook_event, retry_worker_loop
 
 __all__ = [
     "MAX_RETRIES",
@@ -14,4 +14,5 @@ __all__ = [
     "calculate_backoff_delay",
     "compute_retry_state",
     "dispatch_webhook_event",
+    "retry_worker_loop",
 ]

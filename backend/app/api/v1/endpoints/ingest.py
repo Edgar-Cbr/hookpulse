@@ -2,7 +2,7 @@ import json
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,7 @@ from app.core.redis import publish_endpoint_event
 from app.models.endpoint import Endpoint
 from app.models.webhook_event import WebhookEvent
 from app.schemas.event import IngestResponse
+from app.services.delivery_engine import dispatch_webhook_event
 
 logger = logging.getLogger("hookpulse.ingest")
 
@@ -22,6 +23,7 @@ router = APIRouter()
 async def ingest_webhook(
     slug: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_db_session),
     x_webhook_signature: str | None = Header(default=None, alias="X-Webhook-Signature"),
     x_hub_signature_256: str | None = Header(default=None, alias="X-Hub-Signature-256"),
@@ -111,7 +113,10 @@ async def ingest_webhook(
     await publish_endpoint_event(slug, ws_message)
     logger.info(f"Ingested webhook {event.id} on '{slug}' [HMAC valid={is_valid_sig}]")
 
-    # 8. Return 202 Accepted
+    # 8. Trigger initial dispatch attempt asynchronously in the background
+    background_tasks.add_task(dispatch_webhook_event, event.id)
+
+    # 9. Return 202 Accepted
     return IngestResponse(
         event_id=event.id,
         status=event.status,
